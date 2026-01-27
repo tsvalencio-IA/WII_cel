@@ -1,0 +1,199 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>thIAguinho Wii | System Menu</title>
+    
+    <!-- Dependências Críticas -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-core"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-converter"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow-models/pose-detection"></script>
+    <script src="https://cdn.tailwindcss.com"></script>
+
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Chakra+Petch:wght@400;700&family=Russo+One&family=Roboto:wght@300;400;700&display=swap');
+        
+        :root {
+            --wii-blue: #3498db;
+            --wii-bg: #ececec;
+        }
+
+        body {
+            background-color: #111;
+            margin: 0;
+            overflow: hidden;
+            font-family: 'Roboto', sans-serif;
+            color: #333;
+        }
+
+        #console-container {
+            position: relative;
+            width: 100vw;
+            height: 100dvh;
+            background: radial-gradient(circle at center, #ffffff, #dcdcdc);
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Camada de Hardware (Câmera escondida para processamento) */
+        #hardware-layer {
+            position: absolute;
+            top: 0; left: 0;
+            width: 1px; height: 1px;
+            opacity: 0;
+            pointer-events: none;
+        }
+
+        /* Renderização de Jogos */
+        #game-canvas {
+            position: absolute;
+            inset: 0;
+            width: 100%;
+            height: 100%;
+            z-index: 10;
+            display: none;
+        }
+
+        /* Interface do Menu */
+        #wii-menu {
+            position: relative;
+            z-index: 20;
+            width: 100%;
+            height: 100%;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            padding-top: 5vh;
+        }
+
+        .wii-grid {
+            display: grid;
+            width: 90%;
+            height: 70%;
+            gap: 15px;
+            grid-template-columns: repeat(4, 1fr);
+            grid-template-rows: repeat(3, 1fr);
+        }
+
+        .channel-card {
+            background: linear-gradient(135deg, #fff 0%, #f0f0f0 100%);
+            border: 3px solid transparent;
+            border-radius: 20px;
+            box-shadow: 0 8px 20px rgba(0,0,0,0.1);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s cubic-bezier(0.175, 0.885, 0.32, 1.275);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .channel-card:hover {
+            transform: scale(1.05);
+            border-color: var(--wii-blue);
+            box-shadow: 0 12px 30px rgba(52, 152, 219, 0.3);
+        }
+
+        .channel-icon { font-size: 3.5rem; }
+        .channel-title { 
+            font-family: 'Chakra Petch', sans-serif; 
+            font-weight: 700; 
+            font-size: 0.9rem;
+            color: #666;
+            margin-top: 10px;
+        }
+
+        /* Telas de Sistema */
+        .system-screen {
+            position: absolute;
+            inset: 0;
+            z-index: 100;
+            background: var(--wii-bg);
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            text-align: center;
+        }
+
+        .hidden { display: none !important; }
+
+        #bottom-bar {
+            position: absolute;
+            bottom: 0;
+            width: 100%;
+            height: 60px;
+            background: rgba(255,255,255,0.8);
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 0 40px;
+            border-top: 1px solid #ddd;
+        }
+    </style>
+</head>
+<body>
+
+<div id="console-container">
+    <!-- Hardware e Sensores -->
+    <div id="hardware-layer">
+        <video id="webcam-source" playsinline muted autoplay></video>
+    </div>
+
+    <!-- Canvas Único de Alta Performance -->
+    <canvas id="game-canvas"></canvas>
+
+    <!-- Tela de Boot/Segurança -->
+    <div id="boot-screen" class="system-screen">
+        <div class="p-10 bg-white rounded-3xl shadow-2xl max-w-md">
+            <h1 class="text-3xl font-black mb-4">ATENÇÃO</h1>
+            <p class="text-gray-500 mb-8">Certifique-se de que há espaço suficiente ao seu redor para jogar com segurança.</p>
+            <button onclick="WiiSystem.boot()" class="bg-blue-500 hover:bg-blue-600 text-white font-bold py-4 px-10 rounded-full transition-all">
+                INICIAR SISTEMA
+            </button>
+            <div id="status-log" class="mt-6 text-xs text-gray-400 font-mono">Aguardando comando...</div>
+        </div>
+    </div>
+
+    <!-- Menu Principal -->
+    <div id="wii-menu" class="hidden">
+        <div class="wii-grid" id="menu-grid">
+            <!-- Os canais serão injetados pelo console/ui.js -->
+        </div>
+        <div id="bottom-bar">
+            <div id="user-info" class="flex items-center gap-3">
+                <div class="w-10 h-10 rounded-full bg-blue-500 flex items-center justify-center text-white font-bold" id="user-initial">?</div>
+                <div class="text-sm font-bold" id="user-name">Convidado</div>
+            </div>
+            <div class="text-gray-400 text-xs font-bold">WII thIAguinho OS v11.0</div>
+            <div class="text-sm font-mono" id="system-time">00:00</div>
+        </div>
+    </div>
+
+    <!-- Interface Global de Jogo (HUD Overlay) -->
+    <div id="game-overlay" class="hidden absolute inset-0 pointer-events-none z-50">
+        <button onclick="WiiSystem.exitGame()" class="absolute top-6 right-6 w-12 h-12 bg-blue-500 rounded-full text-white pointer-events-auto shadow-lg border-2 border-white font-bold">⌂</button>
+        <div class="absolute top-6 left-6 bg-black/50 p-3 rounded-xl border-l-4 border-blue-500 text-white">
+            <div class="text-[10px] text-blue-300">SCORE</div>
+            <div id="global-score" class="text-2xl font-bold font-mono">00000</div>
+        </div>
+    </div>
+</div>
+
+<!-- Scripts Modulares -->
+<script type="module" src="console/firebase.js"></script>
+<script src="console/system.js"></script>
+<script src="console/ui.js"></script>
+<script src="console/router.js"></script>
+
+<!-- Jogos Registrados (Carregamento via System) -->
+<script src="games/kart/kart.config.js"></script>
+<script src="games/kart/kart.engine.js"></script>
+
+</body>
+</html>
