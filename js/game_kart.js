@@ -1,7 +1,7 @@
 // =====================================================
 // KART DO OTTO – HYBRID FUSION GOLD MASTER
 // STATUS: PHYSICS (NEW) + RENDER (OLD)
-// ENGINEER: CODE 177 + RANKING REAL + CRASH GUARD
+// ENGINEER: CODE 177 + CRASH FIX (SAFETY CHECK)
 // =====================================================
 
 (function() {
@@ -157,7 +157,7 @@ function buildMiniMap(segments) {
             this.state = 'race'; this.lap = 1; this.score = 0;
             this.driftState = 0; this.nitro = 100;
             
-            // Inicializa Rivais com rastreamento de voltas para Ranking correto
+            // Inicializa Rivais
             this.rivals = [
                 { pos: 1000, lap: 1, x: -0.4, speed: 0, color: '#2ecc71', name: 'Luigi', aggro: 0.03, mistakeProb: 0.01 },
                 { pos: 800,  lap: 1, x: 0.4,  speed: 0, color: '#3498db', name: 'Toad',  aggro: 0.025, mistakeProb: 0.005 },
@@ -184,14 +184,13 @@ function buildMiniMap(segments) {
             let detected = 0;
             let pLeft = null, pRight = null;
 
-            // --- 1. INPUT (COM PROTEÇÃO CONTRA PERDA DE CÂMERA) ---
+            // --- 1. INPUT ---
             if (d.state === 'race' && pose && pose.keypoints) {
                 const lw = pose.keypoints.find(k => k.name === 'left_wrist');
                 const rw = pose.keypoints.find(k => k.name === 'right_wrist');
                 if (lw && lw.score > 0.3) { pLeft = window.Gfx.map(lw, w, h); detected++; }
                 if (rw && rw.score > 0.3) { pRight = window.Gfx.map(rw, w, h); detected++; }
                 
-                // Só processa gesto se tiver detecção
                 if (detected >= 1) {
                     let avgY = h;
                     if (detected === 2) avgY = (pLeft.y + pRight.y) / 2;
@@ -219,13 +218,11 @@ function buildMiniMap(segments) {
                 d.virtualWheel.r = Math.hypot(dx, dy) / 2;
                 d.virtualWheel.opacity = 1;
             } else {
-                // Se perder o rastreamento, zera input suavemente
                 d.inputState = 0; 
                 d.targetSteer = 0; 
                 d.virtualWheel.opacity *= 0.9;
             }
             
-            // Suavização do volante
             d.steer += (d.targetSteer - d.steer) * CONF.INPUT_SMOOTHING;
             d.steer = Math.max(-1.2, Math.min(1.2, d.steer));
 
@@ -243,13 +240,14 @@ function buildMiniMap(segments) {
 
             if (Math.abs(d.playerX) > 2.2) d.speed *= CONF.OFFROAD_DECEL;
 
-            // --- CRASH GUARD: Proteção contra NaN (Travamento) ---
+            // --- CRASH GUARD: Proteção contra NaN (O Segredo do Dev Senior) ---
+            // Isso impede que valores inválidos matemáticos travem o jogo
             if (isNaN(d.speed) || !isFinite(d.speed)) d.speed = 0;
             if (isNaN(d.playerX)) d.playerX = 0;
             if (isNaN(d.steer)) d.steer = 0;
 
             const segIdx = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-            const seg = segments[segIdx] || segments[0];
+            const seg = segments[segIdx] || segments[0]; // Fallback de Segurança
             const speedRatio = d.speed / CONF.MAX_SPEED;
 
             const centrifugal = -seg.curve * (speedRatio * speedRatio) * (CONF.CENTRIFUGAL_FORCE * 0.5); 
@@ -284,7 +282,7 @@ function buildMiniMap(segments) {
             }
 
             // Colisão
-            const checkSeg = segments[segIdx];
+            const checkSeg = segments[segIdx] || segments[0];
             checkSeg.obs.forEach(o => {
                 if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.22 && Math.abs(d.playerX) < 4.5) {
                     d.speed *= CONF.CRASH_PENALTY; d.stats.crashes++; o.x = 999;
@@ -321,11 +319,14 @@ function buildMiniMap(segments) {
                 r.speed += (targetS - r.speed) * r.aggro;
                 r.pos += r.speed;
                 
-                // Contagem de voltas da IA (Crucial para ranking)
+                // Contagem de voltas da IA
                 if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
-                if(r.pos < 0) { r.pos += trackLength; r.lap--; } // Caso dê ré (raro)
+                if(r.pos < 0) { r.pos += trackLength; r.lap--; }
 
-                const rSeg = segments[Math.floor(r.pos/SEGMENT_LENGTH)%segments.length];
+                // Segurança na leitura do segmento do rival
+                const rSegIdx = Math.floor(r.pos/SEGMENT_LENGTH)%segments.length;
+                const rSeg = segments[rSegIdx] || segments[0]; // Fallback
+                
                 let idealLine = -(rSeg.curve * 0.6);
                 r.x += (idealLine - r.x) * 0.05;
 
@@ -350,7 +351,7 @@ function buildMiniMap(segments) {
         },
 
         // -------------------------------------------------------------
-        // RENDER: VISUAL PURO (MANTIDO INTACTO)
+        // RENDER: VISUAL PURO
         // -------------------------------------------------------------
         renderWorld: function(ctx, w, h) {
             const d = Logic; const cx = w / 2; const horizon = h * 0.40;
@@ -379,7 +380,8 @@ function buildMiniMap(segments) {
 
             for(let n = 0; n < 100; n++) {
                 const segIdx = (currentSegIndex + n) % segments.length;
-                const seg = segments[segIdx]; dx += (seg.curve * 0.8);
+                const seg = segments[segIdx] || segments[0];
+                dx += (seg.curve * 0.8);
                 const z = n * 20; const scale = 1 / (1 + (z * 0.05));
                 const scaleNext = 1 / (1 + ((z+20) * 0.05));
                 const screenY = horizon + ((h - horizon) * scale);
@@ -500,10 +502,12 @@ function buildMiniMap(segments) {
                     
                     ctx.translate(mapX + mapSize / 2, mapY + mapSize / 2); 
                     ctx.scale(scale, scale);
-                    // Rotação para previsão de curvas
+                    
+                    // Rotação para previsão de curvas (Com proteção contra crash)
                     const segIdxMap = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-                    const segMap = segments[segIdxMap];
+                    const segMap = segments[segIdxMap] || segments[0]; // <--- SEGURANÇA AQUI
                     ctx.rotate(-segMap.curve * 0.7);
+                    
                     ctx.translate(-(bounds.minX + bounds.maxX) / 2, -(bounds.minY + bounds.maxY) / 2);
                     
                     // Pista Verde Neon Espessa
