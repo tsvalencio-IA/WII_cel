@@ -1,7 +1,7 @@
 // =====================================================
 // KART DO OTTO – HYBRID FUSION GOLD MASTER
 // STATUS: PHYSICS (NEW) + RENDER (OLD)
-// ENGINEER: CODE 177 + CRASH FIX (SAFETY CHECK)
+// ENGINEER: CODE 177 + ANTI-CRASH SYSTEM (ULTIMATE V2)
 // =====================================================
 
 (function() {
@@ -57,8 +57,22 @@ function buildMiniMap(segments) {
 
     const SEGMENT_LENGTH = 200; 
     const RUMBLE_LENGTH = 3;    
+    
+    // VARIÁVEIS CRÍTICAS
     let segments = [];
     let trackLength = 0;
+    
+    // SEGMENTO DE SEGURANÇA (Para evitar crash de undefined)
+    const DUMMY_SEG = { curve: 0, y: 0, color: 'light', obs: [] };
+
+    // Helper Seguro para pegar segmentos
+    function getSegment(index) {
+        if (!segments || segments.length === 0) return DUMMY_SEG;
+        // Garante índice positivo e dentro do array (Modulo Bug Fix)
+        // O operador % pode retornar negativo em JS, então somamos length antes
+        const safeIndex = ((Math.floor(index) % segments.length) + segments.length) % segments.length;
+        return segments[safeIndex] || DUMMY_SEG;
+    }
 
     const Logic = {
         // Estado Físico
@@ -112,6 +126,7 @@ function buildMiniMap(segments) {
             addRoad(40, 1.2, 0);
 
             trackLength = segments.length * SEGMENT_LENGTH;
+            if (trackLength === 0) trackLength = 1; // Evita divisão por zero
             buildMiniMap(segments);
         },
 
@@ -167,12 +182,24 @@ function buildMiniMap(segments) {
         },
 
         // =============================================================
-        // GAME LOOP
+        // GAME LOOP (COM BLINDAGEM CONTRA FALHAS)
         // =============================================================
         update: function(ctx, w, h, pose) {
-            this.updatePhysics(w, h, pose);
-            this.renderWorld(ctx, w, h);
-            this.renderUI(ctx, w, h);
+            // SEGURANÇA 1: Se não tem pista, não roda nada (Evita crash inicial)
+            if (!segments || segments.length === 0) return 0;
+
+            try {
+                this.updatePhysics(w, h, pose);
+                this.renderWorld(ctx, w, h);
+                this.renderUI(ctx, w, h);
+            } catch (err) {
+                // SEGURANÇA 2: Se der erro fatal, reseta física para evitar travamento eterno
+                console.error("Auto-Recovery triggered:", err);
+                Logic.speed = 0;
+                Logic.pos = 0;
+                Logic.state = 'race';
+            }
+            
             return Math.floor(this.score);
         },
 
@@ -184,7 +211,8 @@ function buildMiniMap(segments) {
             let detected = 0;
             let pLeft = null, pRight = null;
 
-            // --- 1. INPUT ---
+            // --- 1. INPUT (COM PROTEÇÃO CONTRA POSE NULA) ---
+            // AQUI ESTAVA O ERRO: Se pose for null, o código travava.
             if (d.state === 'race' && pose && pose.keypoints) {
                 const lw = pose.keypoints.find(k => k.name === 'left_wrist');
                 const rw = pose.keypoints.find(k => k.name === 'right_wrist');
@@ -240,19 +268,18 @@ function buildMiniMap(segments) {
 
             if (Math.abs(d.playerX) > 2.2) d.speed *= CONF.OFFROAD_DECEL;
 
-            // --- CRASH GUARD: Proteção contra NaN (O Segredo do Dev Senior) ---
-            // Isso impede que valores inválidos matemáticos travem o jogo
+            // SEGURANÇA: Sanitização de Valores (Impede NaN)
             if (isNaN(d.speed) || !isFinite(d.speed)) d.speed = 0;
             if (isNaN(d.playerX)) d.playerX = 0;
             if (isNaN(d.steer)) d.steer = 0;
 
-            const segIdx = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-            // !!! CORREÇÃO DE SEGURANÇA AQUI !!!
-            // Se segIdx for inválido (negativo ou NaN), usa o segmento 0
-            const seg = segments[Math.max(0, segIdx)] || segments[0]; 
+            // Pega segmento seguro (usando a função blindada)
+            const segIdx = Math.floor(d.pos / SEGMENT_LENGTH);
+            const seg = getSegment(segIdx);
             
             const speedRatio = d.speed / CONF.MAX_SPEED;
 
+            // Cálculos Físicos
             const centrifugal = -seg.curve * (speedRatio * speedRatio) * (CONF.CENTRIFUGAL_FORCE * 0.5); 
             let dynamicGrip = CONF.GRIP_CARVING * 0.65; 
             if(Math.abs(d.steer) < 0.05) dynamicGrip = 0;
@@ -265,7 +292,7 @@ function buildMiniMap(segments) {
             if(d.playerX < -4.5) { d.playerX = -4.5; d.speed *= 0.95; }
             if(d.playerX > 4.5)  { d.playerX = 4.5;  d.speed *= 0.95; }
 
-            // Drift Logic
+            // Drift
             if (d.driftState === 0) {
                 if (Math.abs(d.steer) > 0.9 && speedRatio > 0.6 && Math.abs(d.playerX) <= 2.2) {
                     d.driftState = 1; d.driftDir = Math.sign(d.steer);
@@ -284,8 +311,8 @@ function buildMiniMap(segments) {
                 }
             }
 
-            // Colisão
-            const checkSeg = segments[Math.max(0, segIdx)] || segments[0];
+            // Colisão (usando segmento seguro)
+            const checkSeg = getSegment(segIdx);
             checkSeg.obs.forEach(o => {
                 if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.22 && Math.abs(d.playerX) < 4.5) {
                     d.speed *= CONF.CRASH_PENALTY; d.stats.crashes++; o.x = 999;
@@ -293,8 +320,12 @@ function buildMiniMap(segments) {
                 }
             });
 
-            // Loop de Pista
+            // Loop de Pista Seguro
             d.pos += d.speed;
+            
+            // Proteção contra loop infinito
+            if (trackLength < 1) trackLength = 1;
+
             while (d.pos >= trackLength) {
                 d.pos -= trackLength; d.lap++;
                 if (d.lap <= d.totalLaps) {
@@ -307,10 +338,9 @@ function buildMiniMap(segments) {
             }
             while(d.pos < 0) d.pos += trackLength;
 
-            // --- 3. LÓGICA DE RANKING ABSOLUTO ---
+            // --- LÓGICA DE RANKING ABSOLUTO ---
             let pAhead = 0;
             d.rivals.forEach(r => {
-                // IA Básica
                 let dist = r.pos - d.pos;
                 if(dist > trackLength/2) dist -= trackLength;
                 if(dist < -trackLength/2) dist += trackLength;
@@ -320,20 +350,19 @@ function buildMiniMap(segments) {
                 if(dist < -1200) targetS *= 0.98;
                 
                 r.speed += (targetS - r.speed) * r.aggro;
+                
+                // Sanitização da IA
+                if (isNaN(r.speed)) r.speed = 0;
+                
                 r.pos += r.speed;
                 
-                // Contagem de voltas da IA
                 if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
                 if(r.pos < 0) { r.pos += trackLength; r.lap--; }
 
-                // Segurança na leitura do segmento do rival
-                const rSegIdx = Math.floor(r.pos/SEGMENT_LENGTH)%segments.length;
-                const rSeg = segments[Math.max(0, rSegIdx)] || segments[0]; // Fallback
-                
+                const rSeg = getSegment(Math.floor(r.pos/SEGMENT_LENGTH));
                 let idealLine = -(rSeg.curve * 0.6);
                 r.x += (idealLine - r.x) * 0.05;
 
-                // RANKING REAL: Distância Total Percorrida
                 let playerTotalDist = d.pos + (d.lap * trackLength);
                 let rivalTotalDist = r.pos + (r.lap * trackLength);
                 
@@ -358,8 +387,8 @@ function buildMiniMap(segments) {
         // -------------------------------------------------------------
         renderWorld: function(ctx, w, h) {
             const d = Logic; const cx = w / 2; const horizon = h * 0.40;
-            const currentSegIndex = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-            const currentSeg = segments[Math.max(0, currentSegIndex)] || segments[0];
+            const currentSegIndex = Math.floor(d.pos / SEGMENT_LENGTH);
+            const currentSeg = getSegment(currentSegIndex);
             const isOffRoad = Math.abs(d.playerX) > 2.2;
 
             const gradSky = ctx.createLinearGradient(0, 0, 0, horizon);
@@ -382,8 +411,8 @@ function buildMiniMap(segments) {
             let segmentCoords = [];
 
             for(let n = 0; n < 100; n++) {
-                const segIdx = (currentSegIndex + n) % segments.length;
-                const seg = segments[Math.max(0, segIdx)] || segments[0];
+                const segIdx = currentSegIndex + n;
+                const seg = getSegment(segIdx);
                 dx += (seg.curve * 0.8);
                 const z = n * 20; const scale = 1 / (1 + (z * 0.05));
                 const scaleNext = 1 / (1 + ((z+20) * 0.05));
@@ -391,7 +420,6 @@ function buildMiniMap(segments) {
                 const screenYNext = horizon + ((h - horizon) * scaleNext);
                 const screenX = cx - (camX * scale) - (dx * z * scale * 2);
                 const screenXNext = cx - (camX * scaleNext) - ((dx + seg.curve*0.8) * (z+20) * scaleNext * 2);
-                const roadWidth = (w * 3) * scale; const roadWidthNext = (w * 3) * scaleNext;
                 
                 segmentCoords.push({ x: screenX, y: screenY, scale: scale, index: segIdx });
 
@@ -399,14 +427,14 @@ function buildMiniMap(segments) {
                 ctx.fillRect(0, screenYNext, w, screenY - screenYNext);
                 
                 ctx.fillStyle = (seg.color === 'dark') ? '#c00' : '#fff';
-                ctx.beginPath(); ctx.moveTo(screenX - roadWidth/2 - roadWidth*0.1, screenY); ctx.lineTo(screenX + roadWidth/2 + roadWidth*0.1, screenY); ctx.lineTo(screenXNext + roadWidthNext/2 + roadWidthNext*0.1, screenYNext); ctx.lineTo(screenXNext - roadWidthNext/2 - roadWidthNext*0.1, screenYNext); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(screenX - (w*3*scale)/2 - (w*3*scale)*0.1, screenY); ctx.lineTo(screenX + (w*3*scale)/2 + (w*3*scale)*0.1, screenY); ctx.lineTo(screenXNext + (w*3*scaleNext)/2 + (w*3*scaleNext)*0.1, screenYNext); ctx.lineTo(screenXNext - (w*3*scaleNext)/2 - (w*3*scaleNext)*0.1, screenYNext); ctx.fill();
                 
                 ctx.fillStyle = (seg.color === 'dark') ? '#666' : '#636363';
-                ctx.beginPath(); ctx.moveTo(screenX - roadWidth/2, screenY); ctx.lineTo(screenX + roadWidth/2, screenY); ctx.lineTo(screenXNext + roadWidthNext/2, screenYNext); ctx.lineTo(screenXNext - roadWidthNext/2, screenYNext); ctx.fill();
+                ctx.beginPath(); ctx.moveTo(screenX - (w*3*scale)/2, screenY); ctx.lineTo(screenX + (w*3*scale)/2, screenY); ctx.lineTo(screenXNext + (w*3*scaleNext)/2, screenYNext); ctx.lineTo(screenXNext - (w*3*scaleNext)/2, screenYNext); ctx.fill();
             }
 
             for(let n = 99; n >= 0; n--) {
-                const coord = segmentCoords[n]; const seg = segments[Math.max(0, coord.index)] || segments[0];
+                const coord = segmentCoords[n]; const seg = getSegment(coord.index);
                 d.rivals.forEach(r => {
                     let rRelPos = r.pos - d.pos; if(rRelPos < -trackLength/2) rRelPos += trackLength; if(rRelPos > trackLength/2) rRelPos -= trackLength;
                     if (Math.abs(Math.floor(rRelPos / SEGMENT_LENGTH) - n) < 1.5 && n > 1) {
@@ -459,7 +487,7 @@ function buildMiniMap(segments) {
             ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -20, 18, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = '#333'; ctx.fillRect(-15, -25, 30, 8); // Viseira
             ctx.fillStyle = 'red'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; 
-            ctx.fillText('M', 0, -32); // <--- AQUI ESTÁ A LETRA M MANTIDA
+            ctx.fillText('thIAgo', 0, -32); // <--- AQUI ESTÁ A LETRA M MANTIDA
             ctx.restore(); ctx.restore(); 
         },
 
@@ -507,8 +535,8 @@ function buildMiniMap(segments) {
                     ctx.scale(scale, scale);
                     
                     // Rotação para previsão de curvas (Com proteção contra crash)
-                    const segIdxMap = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-                    const segMap = segments[Math.max(0, segIdxMap)] || segments[0]; // <--- SEGURANÇA AQUI
+                    const segIdxMap = Math.floor(d.pos / SEGMENT_LENGTH);
+                    const segMap = getSegment(segIdxMap);
                     ctx.rotate(-segMap.curve * 0.7);
                     
                     ctx.translate(-(bounds.minX + bounds.maxX) / 2, -(bounds.minY + bounds.maxY) / 2);
@@ -570,7 +598,7 @@ function buildMiniMap(segments) {
     };
 
     if(window.System) {
-        window.System.registerGame('drive', 'Otto Kart GP', '🏎️', Logic, {
+        window.System.registerGame('drive', 'thIAguinho Kart GP', '🏎️', Logic, {
             camOpacity: 0.4, 
             showWheel: false
         });
