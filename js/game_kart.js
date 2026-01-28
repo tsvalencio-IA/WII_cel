@@ -247,7 +247,10 @@ function buildMiniMap(segments) {
             if (isNaN(d.steer)) d.steer = 0;
 
             const segIdx = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-            const seg = segments[segIdx] || segments[0]; // Fallback de Segurança
+            // !!! CORREÇÃO DE SEGURANÇA AQUI !!!
+            // Se segIdx for inválido (negativo ou NaN), usa o segmento 0
+            const seg = segments[Math.max(0, segIdx)] || segments[0]; 
+            
             const speedRatio = d.speed / CONF.MAX_SPEED;
 
             const centrifugal = -seg.curve * (speedRatio * speedRatio) * (CONF.CENTRIFUGAL_FORCE * 0.5); 
@@ -282,7 +285,7 @@ function buildMiniMap(segments) {
             }
 
             // Colisão
-            const checkSeg = segments[segIdx] || segments[0];
+            const checkSeg = segments[Math.max(0, segIdx)] || segments[0];
             checkSeg.obs.forEach(o => {
                 if(o.x < 10 && Math.abs(d.playerX - o.x) < 0.22 && Math.abs(d.playerX) < 4.5) {
                     d.speed *= CONF.CRASH_PENALTY; d.stats.crashes++; o.x = 999;
@@ -325,7 +328,7 @@ function buildMiniMap(segments) {
 
                 // Segurança na leitura do segmento do rival
                 const rSegIdx = Math.floor(r.pos/SEGMENT_LENGTH)%segments.length;
-                const rSeg = segments[rSegIdx] || segments[0]; // Fallback
+                const rSeg = segments[Math.max(0, rSegIdx)] || segments[0]; // Fallback
                 
                 let idealLine = -(rSeg.curve * 0.6);
                 r.x += (idealLine - r.x) * 0.05;
@@ -356,7 +359,7 @@ function buildMiniMap(segments) {
         renderWorld: function(ctx, w, h) {
             const d = Logic; const cx = w / 2; const horizon = h * 0.40;
             const currentSegIndex = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-            const currentSeg = segments[currentSegIndex] || segments[0];
+            const currentSeg = segments[Math.max(0, currentSegIndex)] || segments[0];
             const isOffRoad = Math.abs(d.playerX) > 2.2;
 
             const gradSky = ctx.createLinearGradient(0, 0, 0, horizon);
@@ -380,7 +383,7 @@ function buildMiniMap(segments) {
 
             for(let n = 0; n < 100; n++) {
                 const segIdx = (currentSegIndex + n) % segments.length;
-                const seg = segments[segIdx] || segments[0];
+                const seg = segments[Math.max(0, segIdx)] || segments[0];
                 dx += (seg.curve * 0.8);
                 const z = n * 20; const scale = 1 / (1 + (z * 0.05));
                 const scaleNext = 1 / (1 + ((z+20) * 0.05));
@@ -403,7 +406,7 @@ function buildMiniMap(segments) {
             }
 
             for(let n = 99; n >= 0; n--) {
-                const coord = segmentCoords[n]; const seg = segments[coord.index];
+                const coord = segmentCoords[n]; const seg = segments[Math.max(0, coord.index)] || segments[0];
                 d.rivals.forEach(r => {
                     let rRelPos = r.pos - d.pos; if(rRelPos < -trackLength/2) rRelPos += trackLength; if(rRelPos > trackLength/2) rRelPos -= trackLength;
                     if (Math.abs(Math.floor(rRelPos / SEGMENT_LENGTH) - n) < 1.5 && n > 1) {
@@ -505,7 +508,7 @@ function buildMiniMap(segments) {
                     
                     // Rotação para previsão de curvas (Com proteção contra crash)
                     const segIdxMap = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
-                    const segMap = segments[segIdxMap] || segments[0]; // <--- SEGURANÇA AQUI
+                    const segMap = segments[Math.max(0, segIdxMap)] || segments[0]; // <--- SEGURANÇA AQUI
                     ctx.rotate(-segMap.curve * 0.7);
                     
                     ctx.translate(-(bounds.minX + bounds.maxX) / 2, -(bounds.minY + bounds.maxY) / 2);
