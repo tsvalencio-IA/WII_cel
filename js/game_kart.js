@@ -454,7 +454,7 @@ function buildMiniMap(segments) {
             ctx.fillStyle = '#fff'; ctx.beginPath(); ctx.arc(0, -20, 18, 0, Math.PI*2); ctx.fill();
             ctx.fillStyle = '#333'; ctx.fillRect(-15, -25, 30, 8); // Viseira
             ctx.fillStyle = 'red'; ctx.font='bold 12px Arial'; ctx.textAlign='center'; 
-            ctx.fillText('M', 0, -32); // <--- AQUI ESTÁ A LETRA M MANTIDA
+            ctx.fillText('OttO', 0, -32); // <--- AQUI ESTÁ A LETRA M MANTIDA
             ctx.restore(); ctx.restore(); 
         },
 
