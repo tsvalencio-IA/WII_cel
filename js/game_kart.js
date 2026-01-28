@@ -1,7 +1,7 @@
 // =====================================================
 // KART DO OTTO – HYBRID FUSION GOLD MASTER
 // STATUS: PHYSICS (NEW) + RENDER (OLD)
-// ENGINEER: CODE 177 + RANKING & MAP FIX + CRASH PROTECTION
+// ENGINEER: CODE 177 + RANKING REAL + CRASH GUARD
 // =====================================================
 
 (function() {
@@ -61,15 +61,23 @@ function buildMiniMap(segments) {
     let trackLength = 0;
 
     const Logic = {
+        // Estado Físico
         speed: 0, pos: 0, playerX: 0, steer: 0, targetSteer: 0,
         nitro: 100, turboLock: false,
         driftState: 0, driftDir: 0, driftCharge: 0, mtStage: 0, boostTimer: 0,    
+        
+        // Corrida
         state: 'race', finishTimer: 0, lap: 1, totalLaps: 3,
         time: 0, rank: 1, score: 0,
+        
+        // Visuais
         visualTilt: 0, bounce: 0, skyColor: 0, 
         stats: { drifts: 0, overtakes: 0, crashes: 0 },
+        
+        // Input
         inputState: 0, gestureTimer: 0,
         virtualWheel: { x:0, y:0, r:0, opacity:0 },
+        
         rivals: [],
 
         // -------------------------------------------------------------
@@ -149,11 +157,11 @@ function buildMiniMap(segments) {
             this.state = 'race'; this.lap = 1; this.score = 0;
             this.driftState = 0; this.nitro = 100;
             
-            // CORREÇÃO IA: Adicionada velocidade base para não ficarem parados
+            // Inicializa Rivais com rastreamento de voltas para Ranking correto
             this.rivals = [
-                { pos: 1000, x: -0.4, speed: 0, color: '#2ecc71', name: 'Luigi', aggro: 0.03, mistakeProb: 0.01 },
-                { pos: 800,  x: 0.4,  speed: 0, color: '#3498db', name: 'Toad',  aggro: 0.025, mistakeProb: 0.005 },
-                { pos: 1200, x: 0,    speed: 0, color: '#e74c3c', name: 'Bowser', aggro: 0.04, mistakeProb: 0.02 }
+                { pos: 1000, lap: 1, x: -0.4, speed: 0, color: '#2ecc71', name: 'Luigi', aggro: 0.03, mistakeProb: 0.01 },
+                { pos: 800,  lap: 1, x: 0.4,  speed: 0, color: '#3498db', name: 'Toad',  aggro: 0.025, mistakeProb: 0.005 },
+                { pos: 1200, lap: 1, x: 0,    speed: 0, color: '#e74c3c', name: 'Bowser', aggro: 0.04, mistakeProb: 0.02 }
             ];
             window.System.msg("LARGADA!"); 
         },
@@ -176,27 +184,29 @@ function buildMiniMap(segments) {
             let detected = 0;
             let pLeft = null, pRight = null;
 
-            // Proteção contra falhas de pose
+            // --- 1. INPUT (COM PROTEÇÃO CONTRA PERDA DE CÂMERA) ---
             if (d.state === 'race' && pose && pose.keypoints) {
                 const lw = pose.keypoints.find(k => k.name === 'left_wrist');
                 const rw = pose.keypoints.find(k => k.name === 'right_wrist');
                 if (lw && lw.score > 0.3) { pLeft = window.Gfx.map(lw, w, h); detected++; }
                 if (rw && rw.score > 0.3) { pRight = window.Gfx.map(rw, w, h); detected++; }
                 
-                let avgY = h;
-                if (detected === 2) avgY = (pLeft.y + pRight.y) / 2;
-                else if (detected === 1) avgY = (pLeft ? pLeft.y : pRight.y);
-                
-                if (avgY < h * CONF.TURBO_ZONE_Y) {
-                    d.gestureTimer++;
-                    if (d.gestureTimer === 12 && d.nitro > 5) { 
-                        d.turboLock = !d.turboLock; 
-                        window.System.msg(d.turboLock ? "TURBO ON" : "TURBO OFF");
-                    }
-                } else { d.gestureTimer = 0; }
+                // Só processa gesto se tiver detecção
+                if (detected >= 1) {
+                    let avgY = h;
+                    if (detected === 2) avgY = (pLeft.y + pRight.y) / 2;
+                    else avgY = (pLeft ? pLeft.y : pRight.y);
+                    
+                    if (avgY < h * CONF.TURBO_ZONE_Y) {
+                        d.gestureTimer++;
+                        if (d.gestureTimer === 12 && d.nitro > 5) { 
+                            d.turboLock = !d.turboLock; 
+                            window.System.msg(d.turboLock ? "TURBO ON" : "TURBO OFF");
+                        }
+                    } else { d.gestureTimer = 0; }
+                }
             }
 
-            // Input
             if (detected === 2) {
                 d.inputState = 2;
                 const dx = pRight.x - pLeft.x;
@@ -204,21 +214,22 @@ function buildMiniMap(segments) {
                 const rawAngle = Math.atan2(dy, dx);
                 d.targetSteer = (Math.abs(rawAngle) > CONF.DEADZONE) ? rawAngle * 2.3 : 0;
                 
-                // Dados para UI do Volante
                 d.virtualWheel.x = (pLeft.x + pRight.x) / 2;
                 d.virtualWheel.y = (pLeft.y + pRight.y) / 2;
                 d.virtualWheel.r = Math.hypot(dx, dy) / 2;
                 d.virtualWheel.opacity = 1;
             } else {
+                // Se perder o rastreamento, zera input suavemente
                 d.inputState = 0; 
                 d.targetSteer = 0; 
                 d.virtualWheel.opacity *= 0.9;
             }
             
+            // Suavização do volante
             d.steer += (d.targetSteer - d.steer) * CONF.INPUT_SMOOTHING;
             d.steer = Math.max(-1.2, Math.min(1.2, d.steer));
 
-            // Física do Carro
+            // --- 2. FÍSICA DO CARRO ---
             let currentMax = CONF.MAX_SPEED;
             if (d.turboLock && d.nitro > 0) {
                 currentMax = CONF.TURBO_MAX_SPEED; d.nitro -= 0.6;
@@ -232,8 +243,10 @@ function buildMiniMap(segments) {
 
             if (Math.abs(d.playerX) > 2.2) d.speed *= CONF.OFFROAD_DECEL;
 
-            // Segurança anti-NaN (Previne travamento se velocidade bugar)
-            if (isNaN(d.speed)) d.speed = 0;
+            // --- CRASH GUARD: Proteção contra NaN (Travamento) ---
+            if (isNaN(d.speed) || !isFinite(d.speed)) d.speed = 0;
+            if (isNaN(d.playerX)) d.playerX = 0;
+            if (isNaN(d.steer)) d.steer = 0;
 
             const segIdx = Math.floor(d.pos / SEGMENT_LENGTH) % segments.length;
             const seg = segments[segIdx] || segments[0];
@@ -293,40 +306,33 @@ function buildMiniMap(segments) {
             }
             while(d.pos < 0) d.pos += trackLength;
 
-            // --- CORREÇÃO: LÓGICA DE RANKING E IA (Valores Reais) ---
+            // --- 3. LÓGICA DE RANKING ABSOLUTO ---
             let pAhead = 0;
             d.rivals.forEach(r => {
+                // IA Básica
                 let dist = r.pos - d.pos;
                 if(dist > trackLength/2) dist -= trackLength;
                 if(dist < -trackLength/2) dist += trackLength;
 
-                // 1. IA com Vontade Própria (targetS corrigido)
                 let targetS = CONF.MAX_SPEED * 0.45;
-                if(dist > 1200) targetS *= 0.82; // Espera se estiver muito na frente
-                if(dist < -1200) targetS *= 0.98; // Corre se estiver muito atrás
+                if(dist > 1200) targetS *= 0.82; 
+                if(dist < -1200) targetS *= 0.98;
                 
                 r.speed += (targetS - r.speed) * r.aggro;
                 r.pos += r.speed;
                 
-                if(r.pos >= trackLength) r.pos -= trackLength;
+                // Contagem de voltas da IA (Crucial para ranking)
+                if(r.pos >= trackLength) { r.pos -= trackLength; r.lap++; }
+                if(r.pos < 0) { r.pos += trackLength; r.lap--; } // Caso dê ré (raro)
 
                 const rSeg = segments[Math.floor(r.pos/SEGMENT_LENGTH)%segments.length];
                 let idealLine = -(rSeg.curve * 0.6);
                 r.x += (idealLine - r.x) * 0.05;
 
-                // 2. Ranking Baseado em Distância Total (Correção 1/4)
+                // RANKING REAL: Distância Total Percorrida
                 let playerTotalDist = d.pos + (d.lap * trackLength);
+                let rivalTotalDist = r.pos + (r.lap * trackLength);
                 
-                // Estimativa de volta do rival baseada na distância relativa
-                // Se o rival está um pouco atrás, mas 'dist' diz que ele está na frente (loop), ajusta a volta
-                let rivalLapEst = d.lap;
-                if (dist > trackLength/2) rivalLapEst--; 
-                if (dist < -trackLength/2) rivalLapEst++;
-                
-                // Ajuste fino para não pular ranking incorretamente na linha de chegada
-                let rivalTotalDist = r.pos + (rivalLapEst * trackLength);
-                
-                // Se rival percorreu mais metros totais, ele está na frente
                 if (rivalTotalDist > playerTotalDist) pAhead++;
             });
             d.rank = 1 + pAhead;
